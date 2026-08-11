@@ -1,6 +1,11 @@
 const { MessageFlags } = require('discord.js');
-const { fetchUserProfile } = require('../../utils/tornApi');
-const { factionMemberRoleId, positionRoles } = require('../../utils/positionRoles');
+const { fetchUserProfile, fetchFactionPositions } = require('../../utils/tornApi');
+const {
+  factionMemberRoleId,
+  positionRoles,
+  bankerRoleId,
+  alwaysBankerPositions,
+} = require('../../utils/positionRoles');
 const { setVerified } = require('../../utils/verifiedMembers');
 const { tornFactionId } = require('../../../config.json');
 
@@ -18,6 +23,9 @@ module.exports = {
   ],
 
   callback: async (client, interaction) => {
+    // Kept ephemeral: this is where the api_key input lives, and ephemeral
+    // replies (unlike public ones) hide the whole interaction from other
+    // members, not just the response text.
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
@@ -52,11 +60,39 @@ module.exports = {
       const positionRoleId = positionRoles[profile.faction.position];
       if (positionRoleId) rolesToAdd.push(positionRoleId);
 
+      // Banker role: built-in Leader/Co-leader ranks always qualify, custom
+      // positions are checked live against the faction's Give Money permission.
+      let isBanker = alwaysBankerPositions.includes(profile.faction.position);
+      if (!isBanker) {
+        try {
+          const positions = await fetchFactionPositions(
+            tornFactionId,
+            process.env.TORN_API_KEY
+          );
+          isBanker = positions[profile.faction.position]?.canGiveMoney === 1;
+        } catch (error) {
+          console.log(
+            `[Verify] Couldn't fetch positions for banker check: ${error}`
+          );
+        }
+      }
+      if (isBanker) rolesToAdd.push(bankerRoleId);
+
       await guildMember.roles.add(rolesToAdd);
 
+      // Private confirmation to the user themselves
       await interaction.editReply(
         `Verified! Linked to **${profile.name}** [${profile.player_id}] — Position: **${profile.faction.position}**.`
       );
+
+      // Public announcement in the channel, with no sensitive info in it
+      await interaction.channel
+        .send(
+          `✅ ${guildMember} verified as **${profile.name}** [${profile.player_id}] — Position: **${profile.faction.position}**.`
+        )
+        .catch((error) => {
+          console.log(`[Verify] Couldn't send public confirmation: ${error}`);
+        });
     } catch (error) {
       console.log(`Error in /verify: ${error}`);
       await interaction.editReply(

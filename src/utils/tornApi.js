@@ -35,4 +35,23 @@ async function fetchUserProfile(apiKey) {
   return data; // { player_id, name, faction: { faction_id, position, ... }, ... }
 }
 
-module.exports = { fetchFactionMembers, fetchUserProfile };
+/**
+ * Fetches the faction's custom positions and their permissions.
+ * Requires a key with Faction API Access.
+ * Note: built-in ranks like Leader/Co-leader never appear here - only
+ * custom positions created on the Faction > Controls > Positions page do.
+ * Returns: { [positionName]: { canGiveMoney: 0|1, canKickMembers: 0|1, ... } }
+ */
+async function fetchFactionPositions(factionId, apiKey) {
+  const url = `${TORN_API_BASE}/faction/${factionId}?selections=positions&key=${apiKey}`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  if (data.error) {
+    throw new Error(`Torn API error: ${data.error.error}`);
+  }
+
+  return data.positions; // { [positionName]: { canGiveMoney, ... } }
+}
+
+module.exports = { fetchFactionMembers, fetchUserProfile, fetchFactionPositions };
