@@ -34,7 +34,7 @@ function normalizeBounty(raw, targetId, targetName) {
     targetName,
     reward: raw.reward ?? 0,
     reason: raw.reason || null,
-    quantity: raw.quantity ?? 1,
+    quantity: raw.quantity ?? 0,
     isAnonymous: Boolean(raw.is_anonymous),
     listerId: raw.lister_id ?? null,
     listerName: raw.lister_name ?? null,
@@ -63,7 +63,8 @@ async function checkBounties(client) {
   const rosterMembers = await fetchFactionMembers(tornFactionId, process.env.TORN_API_KEY);
   const verified = getAllVerified();
 
-  // Reverse lookup so we can @mention the target's Discord account if they're verified
+  // Reverse lookup so we can @mention verified members - used for both the
+  // target AND the lister, since either one could be a faction member.
   const tornIdToDiscordId = {};
   for (const [discordId, record] of Object.entries(verified)) {
     tornIdToDiscordId[record.tornId] = discordId;
@@ -90,29 +91,43 @@ async function checkBounties(client) {
 
       if (trackedIds.has(bounty.id)) continue; // already alerted on this one
 
-      const targetMention = tornIdToDiscordId[tornId]
-        ? `<@${tornIdToDiscordId[tornId]}>`
+      // Target: verified members' nicknames already include "[tornId]" (set
+      // by /verify and syncFactionRoles), so the mention alone carries the
+      // ID - no need to append it again. Unverified fallback is just the name.
+      const targetDiscordId = tornIdToDiscordId[tornId];
+      const targetText = targetDiscordId
+        ? `<@${targetDiscordId}>`
         : bounty.targetName;
 
-      // Torn returns lister_id/lister_name even in this sample, but the
-      // is_anonymous flag is the actual source of truth for what's meant
-      // to be shown publicly - so we mask by that flag, not by field presence.
-      const listerText = bounty.isAnonymous
-        ? 'Anonymous'
-        : bounty.listerName || 'Unknown';
+      // Placed by: mention them the same way if they're ALSO a verified
+      // faction member. Otherwise fall back to plain name, and in that case
+      // (no mention/nickname to carry it) append the Torn ID for clarity.
+      const listerDiscordId = bounty.listerId
+        ? tornIdToDiscordId[String(bounty.listerId)]
+        : null;
+
+      let listerText;
+      if (bounty.isAnonymous) {
+        listerText = 'Anonymous';
+      } else if (listerDiscordId) {
+        listerText = `<@${listerDiscordId}>`;
+      } else if (bounty.listerName) {
+        listerText = bounty.listerId
+          ? `${bounty.listerName} [${bounty.listerId}]`
+          : bounty.listerName;
+      } else {
+        listerText = 'Unknown';
+      }
 
       const embed = new EmbedBuilder()
         .setTitle('🎯 New Bounty Placed on a Faction Member')
         .setColor(0xcc0000)
         .addFields(
-          { name: 'Target', value: `${targetMention} [${tornId}]`, inline: true },
+          { name: 'Target', value: targetText, inline: true },
           { name: 'Placed by', value: listerText, inline: true },
-          { name: 'Reward', value: `$${Number(bounty.reward).toLocaleString()}`, inline: true }
+          { name: 'Reward', value: `$${Number(bounty.reward).toLocaleString()}`, inline: true },
+          { name: 'Quantity', value: String(bounty.quantity), inline: true }
         );
-
-      if (bounty.quantity > 1) {
-        embed.addFields({ name: 'Quantity', value: String(bounty.quantity), inline: true });
-      }
 
       if (bounty.reason) {
         embed.addFields({ name: 'Reason', value: bounty.reason });
