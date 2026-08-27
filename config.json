@@ -4,5 +4,7 @@
     "clientID": "1531749227578003539",
     "devs": ["742766266699481089"],
     "tornFactionId": "55278",
-    "syncIntervalMinutes": 30
+    "syncIntervalMinutes": 30,
+    "bountyChannelId": "1542545175941881866",
+    "bountyCheckIntervalMinutes": 5
 }

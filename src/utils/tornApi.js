@@ -1,4 +1,5 @@
 const TORN_API_BASE = 'https://api.torn.com';
+const TORN_API_V2_BASE = 'https://api.torn.com/v2';
 
 /**
  * Fetches the current faction roster from the Torn API.
@@ -36,14 +37,14 @@ async function fetchUserProfile(apiKey) {
 }
 
 /**
- * Fetches the faction's custom positions and their permissions.
- * Requires a key with Faction API Access.
- * Note: built-in ranks like Leader/Co-leader never appear here - only
- * custom positions created on the Faction > Controls > Positions page do.
- * Returns: { [positionName]: { canGiveMoney: 0|1, canKickMembers: 0|1, ... } }
+ * Fetches bounties placed on a SPECIFIC player via Torn's v2 API
+ * (GET /v2/user/{id}/bounties). This avoids paging through the entire
+ * game-wide bounty board (200+ pages) - for a small faction, calling this
+ * once per member (25-30 calls) is far cheaper. Only requires a Public
+ * access key.
  */
-async function fetchFactionPositions(factionId, apiKey) {
-  const url = `${TORN_API_BASE}/faction/${factionId}?selections=positions&key=${apiKey}`;
+async function fetchBountiesForUser(tornId, apiKey) {
+  const url = `${TORN_API_V2_BASE}/user/${tornId}/bounties?key=${apiKey}`;
   const res = await fetch(url);
   const data = await res.json();
 
@@ -51,7 +52,7 @@ async function fetchFactionPositions(factionId, apiKey) {
     throw new Error(`Torn API error: ${data.error.error}`);
   }
 
-  return data.positions; // { [positionName]: { canGiveMoney, ... } }
+  return data.bounties || []; // array of bounties placed on this specific user
 }
 
-module.exports = { fetchFactionMembers, fetchUserProfile, fetchFactionPositions };
+module.exports = { fetchFactionMembers, fetchUserProfile, fetchBountiesForUser };

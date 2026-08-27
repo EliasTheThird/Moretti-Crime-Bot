@@ -1,0 +1,134 @@
+const { EmbedBuilder } = require('discord.js');
+const { fetchFactionMembers, fetchBountiesForUser } = require('./tornApi');
+const { getAllVerified } = require('./verifiedMembers');
+const {
+  getTrackedBountyIds,
+  addTrackedBountyId,
+  pruneTrackedBountyIds,
+} = require('./trackedBounties');
+const { tornFactionId, bountyChannelId } = require('../../config.json');
+
+/**
+ * Normalizes a raw bounty entry from Torn's v2 API. Confirmed live against
+ * a real fetchBountiesForUser() response on 2026-08-27:
+ *
+ * {
+ *   "target_id": 4068727, "target_name": "BadMule", "target_level": 33,
+ *   "lister_id": 4230945, "lister_name": "AlexADT", "reward": 100000,
+ *   "reason": "...", "quantity": 5, "is_anonymous": false,
+ *   "valid_until": 1788424849
+ * }
+ *
+ * Important: Torn does NOT return a unique bounty id. Multiple stacked
+ * bounties from the same lister with the same reward/reason are collapsed
+ * into one object with a "quantity" count. Since there's nothing to key
+ * dedup off of, we build a synthetic id from target + lister + reward +
+ * valid_until. If a new bounty is added with different terms, or the
+ * expiry changes, this will (correctly) be treated as new and re-alerted.
+ */
+function normalizeBounty(raw, targetId, targetName) {
+  const listerId = raw.lister_id ?? 'anon';
+  return {
+    id: `${targetId}:${listerId}:${raw.reward}:${raw.valid_until}`,
+    targetId: String(targetId),
+    targetName,
+    reward: raw.reward ?? 0,
+    reason: raw.reason || null,
+    quantity: raw.quantity ?? 1,
+    isAnonymous: Boolean(raw.is_anonymous),
+    listerId: raw.lister_id ?? null,
+    listerName: raw.lister_name ?? null,
+    validUntil: raw.valid_until ?? null,
+  };
+}
+
+/**
+ * Checks every faction member for active bounties and posts an alert to
+ * `bountyChannelId` for any new one found. Calls Torn's per-user bounties
+ * endpoint once per faction member (25-30 calls for a small faction),
+ * rather than paging through the entire game-wide bounty board.
+ */
+async function checkBounties(client) {
+  if (!bountyChannelId) {
+    console.log('[BountyTracker] No bountyChannelId set in config.json - skipping.');
+    return;
+  }
+
+  const channel = await client.channels.fetch(bountyChannelId).catch(() => null);
+  if (!channel) {
+    console.log('[BountyTracker] Could not find bounty channel - check bountyChannelId.');
+    return;
+  }
+
+  const rosterMembers = await fetchFactionMembers(tornFactionId, process.env.TORN_API_KEY);
+  const verified = getAllVerified();
+
+  // Reverse lookup so we can @mention the target's Discord account if they're verified
+  const tornIdToDiscordId = {};
+  for (const [discordId, record] of Object.entries(verified)) {
+    tornIdToDiscordId[record.tornId] = discordId;
+  }
+
+  const trackedIds = getTrackedBountyIds();
+  const stillActiveIds = new Set();
+  let posted = 0;
+
+  for (const [tornId, member] of Object.entries(rosterMembers)) {
+    let rawBounties;
+    try {
+      rawBounties = await fetchBountiesForUser(tornId, process.env.TORN_API_KEY);
+    } catch (error) {
+      console.log(
+        `[BountyTracker] Failed to fetch bounties for ${member.name} [${tornId}]: ${error}`
+      );
+      continue;
+    }
+
+    for (const raw of rawBounties) {
+      const bounty = normalizeBounty(raw, tornId, member.name);
+      stillActiveIds.add(bounty.id);
+
+      if (trackedIds.has(bounty.id)) continue; // already alerted on this one
+
+      const targetMention = tornIdToDiscordId[tornId]
+        ? `<@${tornIdToDiscordId[tornId]}>`
+        : bounty.targetName;
+
+      // Torn returns lister_id/lister_name even in this sample, but the
+      // is_anonymous flag is the actual source of truth for what's meant
+      // to be shown publicly - so we mask by that flag, not by field presence.
+      const listerText = bounty.isAnonymous
+        ? 'Anonymous'
+        : bounty.listerName || 'Unknown';
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎯 New Bounty Placed on a Faction Member')
+        .setColor(0xcc0000)
+        .addFields(
+          { name: 'Target', value: `${targetMention} [${tornId}]`, inline: true },
+          { name: 'Placed by', value: listerText, inline: true },
+          { name: 'Reward', value: `$${Number(bounty.reward).toLocaleString()}`, inline: true }
+        );
+
+      if (bounty.quantity > 1) {
+        embed.addFields({ name: 'Quantity', value: String(bounty.quantity), inline: true });
+      }
+
+      if (bounty.reason) {
+        embed.addFields({ name: 'Reason', value: bounty.reason });
+      }
+
+      await channel.send({ embeds: [embed] });
+      addTrackedBountyId(bounty.id);
+      posted++;
+    }
+  }
+
+  pruneTrackedBountyIds(stillActiveIds);
+
+  if (posted) {
+    console.log(`[BountyTracker] Posted ${posted} new bounty alert(s).`);
+  }
+}
+
+module.exports = { checkBounties };
