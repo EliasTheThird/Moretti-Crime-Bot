@@ -55,4 +55,43 @@ async function fetchBountiesForUser(tornId, apiKey) {
   return data.bounties || []; // array of bounties placed on this specific user
 }
 
-module.exports = { fetchFactionMembers, fetchUserProfile, fetchBountiesForUser };
+/**
+ * Fetches faction position definitions (GET /v2/faction/{id}/positions),
+ * used by syncFactionRoles.js to determine which positions currently have
+ * money-giving permission for the dynamic Banker role. Requires a key
+ * with Faction API Access - if the key lacks it, this call fails and the
+ * caller falls back to the hardcoded Leader/Co-leader-only list.
+ *
+ * VERIFIED against a live response on 2026-08-28: `data.positions` is an
+ * ARRAY of objects, each shaped like:
+ *   { name: "Hanky", is_default: false, abilities: ["Medical Usage", "Money Giving", ...] }
+ * There is no boolean/int permission flag - money-giving is just the
+ * string "Money Giving" inside the `abilities` array. Normalized here into
+ * { [positionName]: { canGiveMoney: boolean } } so callers don't need to
+ * know about the raw shape.
+ */
+async function fetchFactionPositions(factionId, apiKey) {
+  const url = `${TORN_API_V2_BASE}/faction/${factionId}/positions?key=${apiKey}`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  if (data.error) {
+    throw new Error(`Torn API error: ${data.error.error}`);
+  }
+
+  const normalized = {};
+  for (const position of data.positions || []) {
+    normalized[position.name] = {
+      canGiveMoney: (position.abilities || []).includes('Money Giving'),
+    };
+  }
+
+  return normalized; // { [positionName]: { canGiveMoney: boolean } }
+}
+
+module.exports = {
+  fetchFactionMembers,
+  fetchUserProfile,
+  fetchBountiesForUser,
+  fetchFactionPositions,
+};

@@ -25,6 +25,10 @@ const { tornFactionId, bountyChannelId } = require('../../config.json');
  * dedup off of, we build a synthetic id from target + lister + reward +
  * valid_until. If a new bounty is added with different terms, or the
  * expiry changes, this will (correctly) be treated as new and re-alerted.
+ *
+ * NOTE: the target ID must stay as the FIRST segment of this id - trackedBounties.js
+ * parses it back out (id.split(':')[0]) to know which target a stored id
+ * belongs to when deciding what's safe to prune.
  */
 function normalizeBounty(raw, targetId, targetName) {
   const listerId = raw.lister_id ?? 'anon';
@@ -72,6 +76,14 @@ async function checkBounties(client) {
 
   const trackedIds = getTrackedBountyIds();
   const stillActiveIds = new Set();
+
+  // Which targets we actually got a successful response for this cycle.
+  // Only these targets' old tracked IDs are eligible for pruning - if a
+  // target's fetch failed (Torn backend error, rate limit, etc.) we keep
+  // all of their previously-tracked IDs untouched rather than risk
+  // re-alerting on a bounty that's still active but we just couldn't see.
+  const fetchedTargetIds = new Set();
+
   let posted = 0;
 
   for (const [tornId, member] of Object.entries(rosterMembers)) {
@@ -84,6 +96,8 @@ async function checkBounties(client) {
       );
       continue;
     }
+
+    fetchedTargetIds.add(String(tornId));
 
     for (const raw of rawBounties) {
       const bounty = normalizeBounty(raw, tornId, member.name);
@@ -139,7 +153,7 @@ async function checkBounties(client) {
     }
   }
 
-  pruneTrackedBountyIds(stillActiveIds);
+  pruneTrackedBountyIds(stillActiveIds, fetchedTargetIds);
 
   if (posted) {
     console.log(`[BountyTracker] Posted ${posted} new bounty alert(s).`);

@@ -31,7 +31,7 @@ async function syncFactionRoles(guild) {
       process.env.TORN_API_KEY
     );
     for (const [name, perms] of Object.entries(positions)) {
-      if (perms.canGiveMoney === 1) bankerPositions.add(name);
+      if (perms.canGiveMoney) bankerPositions.add(name);
     }
   } catch (error) {
     console.log(
