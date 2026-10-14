@@ -6,5 +6,8 @@
     "tornFactionId": "55278",
     "syncIntervalMinutes": 30,
     "bountyChannelId": "1542545175941881866",
-    "bountyCheckIntervalMinutes": 3
+    "bountyCheckIntervalMinutes": 3,
+    "hospitalChannelId": "1545937394836963368",
+    "hospitalCheckIntervalSeconds": 60,
+    "hospitalWarningSeconds": 180
 }
